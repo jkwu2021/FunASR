@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FunASR 简洁版 Demo</title>
+    <style>
+      body {
+        font-family: "Helvetica Neue", Arial, sans-serif;
+        margin: 0;
+        padding: 0;
+        background: #f5f5f5;
+        color: #333;
+      }
+
+      main {
+        max-width: 640px;
+        margin: 48px auto;
+        padding: 32px;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 12px 24px rgba(0, 0, 0, 0.08);
+      }
+
+      h1 {
+        margin-top: 0;
+        font-size: 24px;
+        text-align: center;
+      }
+
+      .controls {
+        display: flex;
+        gap: 12px;
+        justify-content: center;
+        margin: 24px 0;
+      }
+
+      button {
+        padding: 10px 24px;
+        font-size: 16px;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        background: #1976d2;
+        color: #fff;
+        transition: background 0.2s ease;
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        background: #b0bec5;
+      }
+
+      button:not(:disabled):hover {
+        background: #0d47a1;
+      }
+
+      #status {
+        text-align: center;
+        min-height: 24px;
+        color: #1976d2;
+      }
+
+      #resultBox {
+        width: 100%;
+        min-height: 240px;
+        padding: 12px;
+        border-radius: 8px;
+        border: 1px solid #cfd8dc;
+        font-size: 16px;
+        line-height: 1.5;
+        resize: vertical;
+        box-sizing: border-box;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>FunASR 语音识别简洁演示</h1>
+      <div id="status">请先点击“连接”按钮。</div>
+      <div class="controls">
+        <button id="btnConnect">连接</button>
+        <button id="btnStart" disabled>开始</button>
+        <button id="btnStop" disabled>停止</button>
+      </div>
+      <textarea
+        id="resultBox"
+        placeholder="识别结果将在此显示，每一段语音之间以换行分隔。"
+        readonly
+      ></textarea>
+    </main>
+
+    <script src="recorder-core.js"></script>
+    <script src="pcm.js"></script>
+    <script src="wav.js"></script>
+    <script src="simple.js"></script>
+  </body>
+</html>
