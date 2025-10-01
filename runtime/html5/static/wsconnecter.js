@@ -26,7 +26,7 @@ function WebSocketConnectMethod( config ) { //定义socket连接方法类
 		}
  
 		if ( 'WebSocket' in window ) {
-			speechSokt = new WebSocket( Uri ); // 定义socket连接对象
+			speechSokt = new WebSocket( Uri); // 定义socket连接对象
 			speechSokt.onopen = function(e){onOpen(e);}; // 定义响应函数
 			speechSokt.onclose = function(e){
 			    console.log("onclose ws!");

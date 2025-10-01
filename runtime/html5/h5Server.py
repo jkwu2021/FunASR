@@ -7,6 +7,7 @@
 
 
 from flask import Flask, render_template, request, send_from_directory, jsonify, redirect, url_for
+import os
 
 # from gevent.pywsgi import WSGIServer
 
@@ -54,10 +55,22 @@ if __name__ == "__main__":
     # flask
     print("srv run on ", port)
 
-    app.run(
-        debug=False,
-        threaded=True,
-        host=args.host,
-        port=port,
-        ssl_context=(args.certfile, args.keyfile),
-    )
+
+	# 判断证书是否存在
+    if os.path.exists(args.certfile) and os.path.exists(args.keyfile):
+        print(f"启动 HTTPS 模式: https://{args.host}:{port}")
+        app.run(
+            debug=False,
+            threaded=True,
+            host=args.host,
+            port=port,
+            ssl_context=(args.certfile, args.keyfile),
+        )
+    else:
+        print(f"未找到证书文件，自动切换到 HTTP 模式: http://{args.host}:{port}")
+        app.run(
+            debug=False,
+            threaded=True,
+            host=args.host,
+            port=port
+        )
