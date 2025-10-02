@@ -1,7 +1,7 @@
 /**
  * FunASR 简洁页面业务脚本
  * 该脚本在保留 index.html 中使用的 Recorder 录音库与接口协议的前提下，
- * 仅实现“连接、开始、停止”三类控制，满足最小化 Demo 的需求。
+ * 仅实现“连接、断开、开始、停止”四类控制，满足最小化 Demo 的需求。
  */
 (function () {
   "use strict";
@@ -16,13 +16,13 @@
    * 当检测到连续静音达到 SILENCE_GAP_MS 毫秒后，认为当前语句结束，
    * 下一次有声段的识别结果将自动换行显示。
    */
-  const SILENCE_GAP_MS = 5000;
+  const SILENCE_GAP_MS = 8000;
 
   /**
    * Recorder.onProcess 回调提供的实时能量值范围为 0~100，
    * 当能量值低于该阈值时，可认为当前帧接近静音。
    */
-  const SILENCE_THRESHOLD = 5;
+  const SILENCE_THRESHOLD = 0;
 
   /**
    * 发送给服务端的 PCM 采样点数，960 个 16 kHz 采样点约等于 60 ms 音频，
@@ -32,6 +32,7 @@
 
   // 页面中的控件引用，便于统一管理状态与文案。
   const connectBtn = document.getElementById("btnConnect");
+  const disconnectBtn = document.getElementById("btnDisconnect");
   const startBtn = document.getElementById("btnStart");
   const stopBtn = document.getElementById("btnStop");
   const statusLabel = document.getElementById("status");
@@ -52,10 +53,10 @@
   let isRecording = false;
 
   /**
-   * segmentActive 表示当前语音段是否处于“讲话中”状态，
-   * 用于控制向后端发送 is_speaking 标记，及 UI 结果换行。
+   * speechActive 仅用于在前端内部标记当前语音段是否处于“讲话中”，
+   * 以便结合静音检测实现自动换行；与发送给服务端的 is_speaking 控制位解耦。
    */
-  let segmentActive = false;
+  let speechActive = false;
   /**
    * awaitingNewLine 在静音超时后置为 true，下一次收到文本时自动换行。
    */
@@ -64,6 +65,12 @@
    * 记录最近一次检测到“有声”帧的时间戳，用于静音检测。
    */
   let lastSpeechTimestamp = 0;
+
+  /**
+   * pendingCloseMessage 用于在 WebSocket 关闭前缓存需要展示的提示语，
+   * 例如手动断开或连接异常时的特定文案；若为空则使用默认提示。
+   */
+  let pendingCloseMessage = "";
 
   /**
    * 累计尚未发送的 Int16 PCM 数据。Recorder.SampleData 会返回 Int16Array，
@@ -78,9 +85,10 @@
   let currentLineIndex = 0;
 
   /**
-   * 绑定三个按钮的事件处理。
+   * 绑定四个按钮的事件处理。
    */
   connectBtn.addEventListener("click", handleConnectClick);
+  disconnectBtn.addEventListener("click", handleDisconnectClick);
   startBtn.addEventListener("click", handleStartClick);
   stopBtn.addEventListener("click", handleStopClick);
 
@@ -95,6 +103,7 @@
 
     updateStatus("正在连接 ASR 服务，请稍候...");
     connectBtn.disabled = true;
+    disconnectBtn.disabled = true;
 
     socket = new WebSocket(ASR_SERVER_URL);
     // 仅发送文本消息与 PCM 数组，这里沿用默认 binaryType。
@@ -103,19 +112,59 @@
       isConnected = true;
       updateStatus("连接成功，请点击“开始”开始录音。");
       startBtn.disabled = false;
+      disconnectBtn.disabled = false;
+	  resultBox.value="";
+	  resultLines.length=0;
+	  resultLines.push("");
+	  currentLineIndex = 0
     };
 
     socket.onmessage = handleSocketMessage;
 
     socket.onclose = () => {
-      updateStatus("连接已断开，如需继续请重新连接。");
-      resetConnectionState();
+      const message =
+        pendingCloseMessage || "连接已断开，如需继续请重新连接。";
+      pendingCloseMessage = "";
+      resetConnectionState(message);
     };
 
     socket.onerror = () => {
-      updateStatus("连接失败，请检查服务端是否可用。");
-      resetConnectionState();
+      pendingCloseMessage = "连接失败，请检查服务端是否可用。";
+      updateStatus(pendingCloseMessage);
+      if (socket) {
+        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+          socket.close();
+        } else {
+          resetConnectionState(pendingCloseMessage);
+        }
+      }
     };
+  }
+
+  /**
+   * 点击“断开”按钮时主动关闭 WebSocket 连接。若正在录音，会先发送
+   * 停止录音的控制帧，确保后端完整接收最后一段音频数据。
+   */
+  function handleDisconnectClick() {
+    if (!socket || socket.readyState === WebSocket.CLOSING || socket.readyState === WebSocket.CLOSED) {
+      return;
+    }
+
+    pendingCloseMessage = "已手动断开连接，可重新点击“连接”。";
+
+    if (isRecording) {
+      // 复用停止录音流程，发送 is_speaking=false 以及剩余的音频数据。
+      handleStopClick();
+    }
+
+    updateStatus("正在断开连接...");
+    try {
+      socket.close();
+    } catch (error) {
+      console.warn("手动关闭 WebSocket 异常：", error);
+      pendingCloseMessage = "";
+      resetConnectionState("连接已断开，如需继续请重新连接。");
+    }
   }
 
   /**
@@ -137,11 +186,11 @@
         isRecording = true;
         startBtn.disabled = true;
         stopBtn.disabled = false;
-        updateStatus("正在录音，保持讲话即可。");
+        updateStatus("正在录音，保持话语即可。");
 
         // 初始化静音检测相关状态。
         lastSpeechTimestamp = Date.now();
-        segmentActive = true;
+        speechActive = true;
         awaitingNewLine = false;
         pendingPcm = new Int16Array();
         sendSpeakingState(true);
@@ -174,7 +223,7 @@
 
     flushPendingPcm();
     sendSpeakingState(false);
-    segmentActive = false;
+    speechActive = false;
     awaitingNewLine = true;
 
     startBtn.disabled = false;
@@ -199,10 +248,11 @@
     if (!text) {
       return;
     }
-
+console.log(awaitingNewLine);
     if (awaitingNewLine) {
       // 如果上一段已经结束且有新的文本到达，添加新行。
       awaitingNewLine = false;
+	  speechActive = true;
       if (resultLines[currentLineIndex].length > 0) {
         resultLines.push("");
         currentLineIndex = resultLines.length - 1;
@@ -247,22 +297,22 @@
       pendingPcm = pendingPcm.slice(PCM_CHUNK_SIZE);
       socket.send(chunk.buffer);
     }
-
+	console.log(powerLevel,awaitingNewLine);
     const now = Date.now();
     if (powerLevel > SILENCE_THRESHOLD) {
       // 检测到讲话，刷新时间戳。
       lastSpeechTimestamp = now;
-      if (!segmentActive) {
-        // 静音后重新讲话，需要发送 is_speaking=true 通知服务端进入新语句。
-        segmentActive = true;
-        sendSpeakingState(true);
-      }
-    } else if (segmentActive && now - lastSpeechTimestamp >= SILENCE_GAP_MS) {
+      // 静音后重新检测到讲话时，仅恢复前端状态，保持与 index.html 一致的控制帧节奏。
+      //if (!speechActive) {
+        speechActive = true;
+       // awaitingNewLine = false;
+      //}
+    } else if (speechActive && now - lastSpeechTimestamp > SILENCE_GAP_MS) {
       // 静音超过设定阈值，结束当前语句并准备换行。
       flushPendingPcm();
-      sendSpeakingState(false);
-      segmentActive = false;
+	  speechActive = false;
       awaitingNewLine = true;
+	  
     }
   }
 
@@ -280,7 +330,8 @@
 
   /**
    * 发送 FunASR WebSocket 协议所需的控制帧。
-   * 结构与 index.html 中 onOpen/stop 的请求保持一致，确保服务端正常解析。
+   * 为保持与 index.html 一致，simple 页面只会在整体开始/停止录音时通知 is_speaking，
+   * 静音检测仅用于前端分行展示，不影响控制帧。
    */
   function sendSpeakingState(isSpeaking) {
     if (!socket || socket.readyState !== WebSocket.OPEN) {
@@ -289,10 +340,10 @@
     const request = {
       chunk_size: [5, 10, 5],
       wav_name: "simple-demo",
-      is_speaking: isSpeaking,
       chunk_interval: 10,
       itn: false,
-      mode: "online",
+      mode: "2pass",
+      is_speaking: isSpeaking,
     };
     socket.send(JSON.stringify(request));
   }
@@ -300,10 +351,12 @@
   /**
    * 连接断开或出错时，统一恢复按钮与状态。
    */
-  function resetConnectionState() {
+  function resetConnectionState(message) {
     if (socket) {
       try {
-        socket.close();
+        if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+          socket.close();
+        }
       } catch (error) {
         console.warn("关闭 WebSocket 异常：", error);
       }
@@ -311,13 +364,17 @@
     socket = null;
     isConnected = false;
     isRecording = false;
-    segmentActive = false;
+    speechActive = false;
     awaitingNewLine = false;
     pendingPcm = new Int16Array();
+    pendingCloseMessage = "";
 
     connectBtn.disabled = false;
     startBtn.disabled = true;
     stopBtn.disabled = true;
+    disconnectBtn.disabled = true;
+
+    updateStatus(message || "请先点击“连接”按钮。");
   }
 
   /**
@@ -326,4 +383,7 @@
   function updateStatus(message) {
     statusLabel.textContent = message;
   }
+
+  // 初始化状态栏文本，确保在未能正确解析 HTML 默认文字时也能显示。
+  updateStatus("请先点击“连接”按钮。");
 })();
